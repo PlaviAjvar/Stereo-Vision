@@ -13,12 +13,12 @@ function [L, R, d, GT, sim, DSI] = sim_method(image, method)
 
 
 % load images and display
-L = iread(strcat(image, '\view1.png'), 'reduce', 10);
-R = iread(strcat(image, '\view5.png'), 'reduce', 10);
+L = iread(strcat(image, '\view1.png'));
+R = iread(strcat(image, '\view5.png'));
 
 % load ground truth and adjust for size
-GT = iread(strcat(image,'\disp1.png'), 'reduce', 10);
-GT = GT / 2;
+GT = iread(strcat(image,'\disp1.png'));
+GT = GT / 2; 
 dmin = double(min(min(GT)));
 dmax = double(max(max(GT)));
 
