@@ -19,6 +19,7 @@ D = dmax - dmin + 1;
 
 % define return values
 DSI = NaN(n, m, D);
+brojac = 0;
 
 for i = 1:n
     if mod(i,10) == 0
