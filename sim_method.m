@@ -1,5 +1,5 @@
 function [L, R, d, GT, sim, DSI] = sim_method(image, method)
-% Utility function for simulating generic stereo algorithm 
+% Utility function for simulating stereo algorithms
 % [L, R, d, GT, sim, DSI] = sim_method(image, method)
 %
 % image = {'Aloe', 'Lampshade1', 'Rocks1'}

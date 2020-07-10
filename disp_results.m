@@ -1,6 +1,6 @@
-function disp_sim_results(L, R, d, GT)
-% function for displaying simulation results
-% disp_sim_results(L, R, d, GT)
+function disp_results(L, R, d, GT)
+% Function for displaying simulation results
+% disp_results(L, R, d, GT)
 %
 % L, R are the left and right image pair
 % d is the estimated disparity map
