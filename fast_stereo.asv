@@ -20,8 +20,7 @@ typedef unsigned char PIX;
 double time_diff(struct timeval *tv1, struct timeval *tv2);
 void compute_means(float *L, float *R, int width, int height, int wx, int wy, float *meanL, float *meanR);
 void stereo_matching_classic(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax);
-void stereo_matching_smooth(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax,
-        double lam, double vsat);
+void stereo_matching_smooth(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax);
 
 /* matrix reference macros Matlab element order (column wise) */
 #define REF(p,x,y)  p[(y)*width+x]
@@ -118,12 +117,11 @@ void compute_means(float *L, float *R, int width, int height, int wx, int wy, fl
 
 
 // function implementing scanline DP using smoothness constraint
-void stereo_matching_smooth(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax,
-        double lam, double vsat) {
-    int i, D, x, y, d, leftmost, min_state, cur_state, disp_hi, disp_lo, min_label, disp_bye;
+void stereo_matching_smooth(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax) {
+    int i, D, x, y, d, leftmost, min_state, cur_state, disp_hi, disp_lo, min_energy, min_label;
     int *backtrack;
     double *unary, *energy;
-    double max_energy, min_energy;
+    double lam, vsat, mini, max_energy;
     double Z_NAN = mxGetNaN();
 
     D = dmax - dmin + 1;
@@ -142,6 +140,10 @@ void stereo_matching_smooth(float *L, float *R, double *dsi, int width, int heig
 
     mexPrintf("Found unary costs\n");
 
+    // we'll use the following constats fot the binary costs
+    lam = 0;
+    vsat = 0;
+
     // leftmost possible x-value
     leftmost = (wx >= dmin) ? wx : dmin;
     
@@ -159,11 +161,19 @@ void stereo_matching_smooth(float *L, float *R, double *dsi, int width, int heig
                 REF3(energy, x, y, d-dmin) = REF3(energy, x-1, y, d-dmin);
                 REF3(backtrack, x, y, d-dmin) = d-dmin;
             }
+            
+            if (y == 0) {
+                for (d = disp_lo; d <= disp_hi; ++d) {
+                    mexPrintf("energy(%d) = %f %f\n", d-dmin, REF3(energy, x-1, y, d-dmin), REF3(energy, x, y, d-dmin)); 
+                    mexPrintf("bt(%d) = %d\n, d-dmin, REF3(backtrack, x, y, d-dmin)
+                     = d-dmin;
+                }
+            }
 
             // forward pass
             for (d = disp_lo+1; d <= disp_hi; ++d) {
                 // is NaN if disparity disp_hi isn't feasible for x-1
-                if (x - 1 - wx < d || REF3(energy, x, y, d-dmin) > REF3(energy, x, y, d-1-dmin) + lam) {
+                if (x - 1 - wx < disp_hi || REF3(energy, x, y, d-dmin) > REF3(energy, x, y, d-1-dmin) + lam) {
                     REF3(energy, x, y, d-dmin) = REF3(energy, x, y, d-1-dmin) + lam;
                     REF3(backtrack, x, y, d-dmin) = REF3(backtrack, x, y, d-1-dmin);
                 }
@@ -177,34 +187,36 @@ void stereo_matching_smooth(float *L, float *R, double *dsi, int width, int heig
                 }
             }
             
+            /*
+            // apply saturation
             // first find minimum energy in last column
             min_energy = REF3(energy, x-1, y, 0);
             min_label = 0;
-            disp_bye = (dmax <= x - 1 - wx) ? dmax : (x - 1 - wx);
 
-            for (d = disp_lo+1; d <= disp_bye; ++d) {
-                if (REF3(energy, x-1, y, d-dmin) < min_energy) {
+            for (d = disp_lo+1; d <= disp_hi; ++d) {
+                if (REF3(energy, x-1, y, d-dmin) != Z_NAN && REF3(energy, x-1, y, d-dmin) < min_energy) {
                     min_energy = REF3(energy, x-1, y, d-dmin);
                     min_label = d-dmin;
                 }
             }
-            
-            // now iterate through current column and apply saturation
+
             for (d = disp_lo; d <= disp_hi; ++d) {
                 if (REF3(energy, x, y, d-dmin) > vsat + min_energy) {
                     REF3(energy, x, y, d-dmin) = vsat + min_energy;
                     REF3(backtrack, x, y, d-dmin) = min_label;
                 }
             }
+            */
 
             // add unary costs
             for (d = disp_lo; d <= disp_hi; ++d) {
                 REF3(energy, x, y, d-dmin) += REF3(unary, x, y, d-dmin);
             }
             
+            /*
             // find max energy
             max_energy = REF3(energy, x, y, 0);
-            for(d = disp_lo + 1; d <= disp_hi; ++d) {
+            for(d = disp_lo; d <= disp_hi; ++d) {
                 if (REF3(energy, x, y, d-dmin) > max_energy) {
                     max_energy = REF3(energy, x, y, d-dmin);
                 }
@@ -214,8 +226,20 @@ void stereo_matching_smooth(float *L, float *R, double *dsi, int width, int heig
             for (d = disp_lo; d <= disp_hi; ++d) {
                 REF3(energy, x, y, d-dmin) -= max_energy;
             }
+            */
         }
     }
+    
+    /*
+    for (y = wy; y < height - wy; ++y) {
+        for (x = wx; x < width - wx; ++x) {
+            for(d = dmin; d <= dmax; ++d) {
+                mexPrintf("Energy(%d,%d,%d) = %f\n", x,y,d-disp_lo, REF3(energy,x,y,d-dmin));
+                mexPrintf("Backtrack(%d,%d,%d) = %d\n", x,y,d-disp_lo, REF3(backtrack,x,y,d-dmin));
+            }
+        }
+    }
+     */
             
     mexPrintf("Found energy table\n");
     
@@ -234,6 +258,7 @@ void stereo_matching_smooth(float *L, float *R, double *dsi, int width, int heig
         }
 
         // set zero energy for optimal matches in DSI
+        //mexPrintf("Minstate: %f\n", REF3(energy, x, y, min_state));
         REF3(dsi, x, y, min_state) = 0;
         cur_state = min_state;
 
@@ -269,7 +294,7 @@ mexFunction(
   unsigned int width_l, height_l, height_r, width_r, width, height;
   int wx, wy, i, j, dispmin, dispmax;
   float *leftI, *rightI, *leftI_ptr, *rightI_ptr;
-  double *p, *scoresD, *exec_time;
+  double *p, *scoresD;
   mwSize    dims[3];
   double Z_NAN = mxGetNaN();
   double Z_INFINITY = mxGetInf();
@@ -277,10 +302,6 @@ mexFunction(
   struct timeval	t0, t1, t2, t3, t4;
 #endif
   char  metric[14];
-  double scaler, saturation;
-  // default values
-  scaler = 1;
-  saturation = 2;
 
 
 #ifdef  TIMING
@@ -298,32 +319,8 @@ mexFunction(
         mexErrMsgTxt("approach must be specified by a string");
     mxGetString(prhs[4], metric, 14);
     break;
-  case 6:
-    if (!mxIsChar(prhs[4]))
-        mexErrMsgTxt("approach must be specified by a string");
-    mxGetString(prhs[4], metric, 14);
-    
-    if (strcmp(metric, "SmoothDP") != 0) {
-        mexErrMsgTxt("too many arguments");
-    }
-    
-      /* get disparity range */
-    switch (mxGetNumberOfElements(prhs[5])) {
-      case 2: {
-        double  *param = mxGetPr(prhs[5]);
-
-        scaler = (double)param[0];
-        saturation = (double)param[1];
-        break;
-      }
-      default:
-        mexErrMsgTxt("Parameters must be 1- or 2-vector");
-        return;
-      }
-    
-    break;
   default:
-    mexErrMsgTxt("expecting 4,5 or 6 arguments");
+    mexErrMsgTxt("expecting 4 or 5 arguments");
     return;
   }
 
@@ -451,13 +448,13 @@ mexFunction(
   gettimeofday (&t3, NULL);
 #endif
 
-  mexPrintf("%s\n\n", metric);
+  printf("%s\n", metric);
 
   if (strcmp(metric, "Classic") == 0) {
       stereo_matching_classic(leftI, rightI, scoresD, width, height, wx, wy, dispmin, dispmax);
   }
   else if (strcmp(metric, "SmoothDP") == 0) {
-      stereo_matching_smooth(leftI, rightI, scoresD, width, height, wx, wy, dispmin, dispmax, scaler, saturation);
+      stereo_matching_smooth(leftI, rightI, scoresD, width, height, wx, wy, dispmin, dispmax);
   }
   else {
       mexErrMsgTxt("Unknown approach");
@@ -465,19 +462,12 @@ mexFunction(
 
 #ifdef  TIMING
   gettimeofday (&t4, NULL);
-  mexPrintf("\n");  
+
   mexPrintf("arg checking     %.1fms\n", time_diff(&t1, &t0)*1000);
   mexPrintf("image conversion %.1fms\n", time_diff(&t2, &t1)*1000);
   mexPrintf("score array      %.1fms\n", time_diff(&t3, &t2)*1000);
   mexPrintf("stereo           %.1fms\n", time_diff(&t4, &t3)*1000);
 #endif
-  
-  if (nlhs == 2) {
-    // return execution time
-    plhs[1] = mxCreateDoubleMatrix(1, 1, mxREAL);
-    exec_time = (double *) mxGetData(plhs[1]);
-    exec_time[0] = time_diff(&t4, &t3)*1000;
-  }
 
   /* free the temporary float images */
   mxFree(leftI);

@@ -1,6 +1,6 @@
-function [d, sim, DSI] = find_disparity(L, R, d_range, H, method)
+function [d, sim, DSI, exec_time] = find_disparity(L, R, d_range, H, method)
 % Helper function for calling algorithm of choice
-% [d, sim, DSI] = find_disparity(L, R, d_range, H, method)
+% [d, sim, DSI, exec_time] = find_disparity(L, R, d_range, H, method)
 %
 % L, R are the image pair
 % d_range = [d_min, d_max] is the range of feasible disparities
@@ -15,7 +15,7 @@ else
     R = imono(R);
     
     % call C solver
-    DSI = fast_stereo(L, R, H, d_range, method);
+    [DSI, exec_time] = fast_stereo(L, R, H, d_range, method);
     
     % get disparity estimates from disparity state image
     [sim, d] = min(DSI, [], 3);
