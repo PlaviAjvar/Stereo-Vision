@@ -27,7 +27,7 @@ void compute_means(float *L, float *R, int width, int height, int wx, int wy, fl
 
 
 // function implementing ZNCC between patches
-double match_patch(float *L, float *meanL, int xL, int yL, float *R, float *meanR, int xR, int yR, int wx, int wy,
+inline double match_patch(float *L, float *meanL, int xL, int yL, float *R, float *meanR, int xR, int yR, int wx, int wy,
         int width, int height) {
     int i, j;
     double sumL, sumR, sumLR, dL, dR, num, den, muL, muR;
