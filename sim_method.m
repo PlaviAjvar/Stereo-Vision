@@ -13,17 +13,17 @@ function [L, R, d, GT, sim, DSI] = sim_method(image, method)
 
 
 % load images and display
-L = iread(strcat(image, '\view1.png'));
-R = iread(strcat(image, '\view5.png'));
+L = iread(strcat(image, '\view1.png'), 'reduce', 20);
+R = iread(strcat(image, '\view5.png'), 'reduce', 20);
 
 % load ground truth and adjust for size
-GT = iread(strcat(image,'\disp1.png'));
-GT = GT / 2; 
+GT = iread(strcat(image,'\disp1.png'), 'reduce', 20);
+GT = GT / 40; 
 dmin = double(min(min(GT)));
 dmax = double(max(max(GT)));
 
 % fix correlation window and call utility function for finding disparities
-H = 5;
+H = 1;
 [d, sim, DSI] = find_disparity(L, R, [dmin, dmax], H, method);
 
 % d = istereo(L, R, [dmin, dmax], H);

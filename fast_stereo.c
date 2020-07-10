@@ -19,6 +19,8 @@
 typedef unsigned char PIX;
 double time_diff(struct timeval *tv1, struct timeval *tv2);
 void compute_means(float *L, float *R, int width, int height, int wx, int wy, float *meanL, float *meanR);
+void stereo_matching_classic(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax);
+void stereo_matching_smooth(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax);
 
 /* matrix reference macros Matlab element order (column wise) */
 #define REF(p,x,y)  p[(y)*width+x]
@@ -37,7 +39,7 @@ inline double match_patch(float *L, float *meanL, int xL, int yL, float *R, floa
     sumLR = 0;
     muL = REF(meanL, xL, yL);
     muR = REF(meanR, xR, yR);
-    
+
     // iterate over window and calculate sums
     for (i = -wx; i <= wx; ++i) {
         for (j = -wy; j <= wy; ++j) {
@@ -48,25 +50,25 @@ inline double match_patch(float *L, float *meanL, int xL, int yL, float *R, floa
             sumLR += dL * dR;
         }
     }
-    
+
     num = sumLR;
     den = sqrt(sumL * sumR);
-    
+
     // if denominator is zero, zncc is undefined
     if (den < 1e-6) {
-        return mxGetInf();
+        return 2;
     }
     // ro = 1 - (num / den)
     return (den - num) / den;
 }
 
 
-// function implementing classic stereo matching strategy using ZNCC
-void stereo_matching_zncc(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax) {
+// function implementing classic stereo matching strategy using classic approach
+void stereo_matching_classic(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax) {
     int x, y, disp, disp_lo, disp_hi;
     float *meanL, *meanR;
     double zncc;
-    
+
     // allocate mean matrices and calculate means of all patches
     meanL = (float*) mxCalloc(height * width, sizeof(float));
     meanR = (float*) mxCalloc(height * width, sizeof(float));
@@ -80,7 +82,7 @@ void stereo_matching_zncc(float *L, float *R, double *dsi, int width, int height
             for (disp = disp_lo; disp <= disp_hi; ++disp) {
                 zncc = match_patch(L, meanL, x, y, R, meanR, x-disp, y, wx, wy, width, height);
                 REF3(dsi, x, y, disp - dmin) = zncc;
-            } 
+            }
         }
     }
 
@@ -113,6 +115,154 @@ void compute_means(float *L, float *R, int width, int height, int wx, int wy, fl
     }
 }
 
+
+// function implementing scanline DP using smoothness constraint
+void stereo_matching_smooth(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax) {
+    int i, D, x, y, d, leftmost, min_state, cur_state, disp_hi, disp_lo, min_energy, min_label;
+    int *backtrack;
+    double *unary, *energy;
+    double lam, vsat, mini, max_energy;
+    double Z_NAN = mxGetNaN();
+
+    D = dmax - dmin + 1;
+    unary = (double*) mxCalloc(height * width * D, sizeof(double));
+    energy = (double*) mxCalloc(height * width * D, sizeof(double));
+    backtrack = (int*) mxCalloc(height * width * D, sizeof(int));
+
+    for (i = 0; i < height*width*D; ++i) {
+        unary[i] = Z_NAN;
+        energy[i] = Z_NAN;
+        backtrack[i] = -1;
+    }
+
+    // use classic algorithm to compute unary costs
+    stereo_matching_classic(L, R, unary, width, height, wx, wy, dmin, dmax);
+
+    mexPrintf("Found unary costs\n");
+
+    // we'll use the following constats fot the binary costs
+    lam = 0;
+    vsat = 0.2;
+
+    // leftmost possible x-value
+    leftmost = (wx >= dmin) ? wx : dmin;
+
+    for (y = wy; y < height - wy; ++y) {
+        REF3(energy, leftmost, y, 0) = REF3(unary, leftmost, y, 0);
+    }
+
+    for (y = wy; y < height - wy; ++y) {
+        for (x = leftmost + 1; x < width - wx; ++x) {
+            disp_lo = dmin;
+            disp_hi = (dmax <= x - wx) ? dmax : (x - wx);
+
+            // initialize with costs from last iteration
+            for (d = disp_lo; d <= disp_hi; ++d) {
+                REF3(energy, x, y, d-dmin) = REF3(energy, x-1, y, d-dmin);
+                REF3(backtrack, x, y, d-dmin) = d-dmin;
+            }
+
+            // forward pass
+            for (d = disp_lo+1; d <= disp_hi; ++d) {
+                // is NaN if disparity disp_hi isn't feasible for x-1
+                if (x - 1 - wx < disp_hi || REF3(energy, x, y, d-dmin) > REF3(energy, x, y, d-1-dmin) + lam) {
+                    REF3(energy, x, y, d-dmin) = REF3(energy, x, y, d-1-dmin) + lam;
+                    REF3(backtrack, x, y, d-dmin) = REF3(backtrack, x, y, d-1-dmin);
+                }
+            }
+
+            // backward pass
+            for (d = disp_hi-1; d >= disp_lo; --d) {
+                if (REF3(energy, x, y, d-dmin) > REF3(energy, x, y, d+1-dmin) + lam) {
+                    REF3(energy, x, y, d-dmin) = REF3(energy, x, y, d+1-dmin) + lam;
+                    REF3(backtrack, x, y, d-dmin) = REF3(backtrack, x, y, d+1-dmin);
+                }
+            }
+
+            // apply saturation
+            // first find minimum energy in last column
+            min_energy = REF3(energy, x-1, y, 0);
+            min_label = 0;
+
+            for (d = disp_lo+1; d <= disp_hi; ++d) {
+                if (REF3(energy, x-1, y, d-dmin) != Z_NAN && REF3(energy, x-1, y, d-dmin) < min_energy) {
+                    min_energy = REF3(energy, x-1, y, d-dmin);
+                    min_label = d-dmin;
+                }
+            }
+
+            for (d = disp_lo; d <= disp_hi; ++d) {
+                if (REF3(energy, x, y, d-dmin) > vsat + min_energy) {
+                    REF3(energy, x, y, d-dmin) = vsat + min_energy;
+                    REF3(backtrack, x, y, d-dmin) = min_label;
+                }
+            }
+
+            // add unary costs
+            for (d = disp_lo; d <= disp_hi; ++d) {
+                REF3(energy, x, y, d-dmin) += REF3(unary, x, y, d-dmin);
+            }
+            
+            /*
+            // find max energy
+            max_energy = REF3(energy, x, y, 0);
+            for(d = disp_lo; d <= disp_hi; ++d) {
+                if (REF3(energy, x, y, d-dmin) > max_energy) {
+                    max_energy = REF3(energy, x, y, d-dmin);
+                }
+            }
+        
+            // normalize energies
+            for (d = disp_lo; d <= disp_hi; ++d) {
+                REF3(energy, x, y, d-dmin) -= max_energy;
+            }
+            */
+        }
+    }
+    
+    for (y = wy; y < height - wy; ++y) {
+        for (x = wx; x < width - wx; ++x) {
+            for(d = dmin; d <= dmax; ++d) {
+                mexPrintf("Energy(%d,%d,%d) = %f\n", x,y,d-disp_lo, REF3(energy,x,y,d-dmin));
+            }
+        }
+    }
+            
+    mexPrintf("Found energy table\n");
+    
+    // reconstruct the solution for each row via backtracking
+    for (y = wy; y < height - wy; ++y) {
+        x = width - wx - 1;
+        disp_lo = dmin;
+        disp_hi = (dmax <= x - wx) ? dmax : (x - wx);
+
+        // first find the state with the minimum aggregated energy
+        min_state = 0;
+        for (d = disp_lo+1; d <= disp_hi; ++d) {
+            if (REF3(energy, x, y, min_state) > REF3(energy, x, y, d-dmin)) {
+                min_state = d - dmin;
+            }
+        }
+
+        // set zero energy for optimal matches in DSI
+        REF3(dsi, x, y, min_state) = 0;
+        cur_state = min_state;
+
+        // backtrack from that state
+        while (x > leftmost) {
+            cur_state = REF3(backtrack, x, y, cur_state);
+            REF3(dsi, x-1, y, cur_state) = 0;
+            --x;
+        }
+    } 
+
+    mxFree(unary);
+    mxFree(energy);
+    mxFree(backtrack);
+}
+
+
+
 /*
  * disp = stereo(L, R, w, disprange, metric)
  *
@@ -122,14 +272,14 @@ void compute_means(float *L, float *R, int width, int height, int wx, int wy, fl
  *
  *  disp is a NxMxD matrix of int16
  */
-void 
+void
 mexFunction(
 		 int nlhs, mxArray *plhs[],
 		 int nrhs, const mxArray *prhs[])
 {
   unsigned int width_l, height_l, height_r, width_r, width, height;
   int wx, wy, i, j, dispmin, dispmax;
-  float *leftI, *rightI, *leftI_ptr, *rightI_ptr; 
+  float *leftI, *rightI, *leftI_ptr, *rightI_ptr;
   double *p, *scoresD;
   mwSize    dims[3];
   double Z_NAN = mxGetNaN();
@@ -153,7 +303,7 @@ mexFunction(
   case 5:
     if (!mxIsChar(prhs[4]))
         mexErrMsgTxt("approach must be specified by a string");
-    mxGetString(prhs[4], metric, 8);
+    mxGetString(prhs[4], metric, 14);
     break;
   default:
     mexErrMsgTxt("expecting 4 or 5 arguments");
@@ -218,7 +368,7 @@ mexFunction(
   leftI_ptr = leftI;
   rightI_ptr = rightI;
 
-  if (mxGetClassID(prhs[0]) != mxGetClassID(prhs[1])) 
+  if (mxGetClassID(prhs[0]) != mxGetClassID(prhs[1]))
     mexErrMsgTxt("Images must be of the same class");
 
   switch (mxGetClassID(prhs[0])) {
@@ -230,7 +380,7 @@ mexFunction(
 
       for (i = 0; i < height; i++) {
         for (j = 0; j < width; j++) {
-          
+
           *(leftI_ptr++) = (float) REF_ML(l,j,i);
           *(rightI_ptr++) = (float) REF_ML(r,j,i);
         }
@@ -246,7 +396,7 @@ mexFunction(
 
       for (i = 0; i < height; i++) {
         for (j = 0; j < width; j++) {
-          
+
           *(leftI_ptr++) = (float) REF_ML(l,j,i);
           *(rightI_ptr++) = (float) REF_ML(r,j,i);
         }
@@ -258,7 +408,7 @@ mexFunction(
     mexErrMsgTxt("Images must be double or uint8 class");
   }
 
-  
+
 #ifdef  TIMING
   gettimeofday (&t2, NULL);
 #endif
@@ -284,8 +434,13 @@ mexFunction(
   gettimeofday (&t3, NULL);
 #endif
 
+  printf("%s\n", metric);
+
   if (strcmp(metric, "Classic") == 0) {
-      stereo_matching_zncc(leftI, rightI, scoresD, width, height, wx, wy, dispmin, dispmax);
+      stereo_matching_classic(leftI, rightI, scoresD, width, height, wx, wy, dispmin, dispmax);
+  }
+  else if (strcmp(metric, "SmoothDP") == 0) {
+      stereo_matching_smooth(leftI, rightI, scoresD, width, height, wx, wy, dispmin, dispmax);
   }
   else {
       mexErrMsgTxt("Unknown approach");
