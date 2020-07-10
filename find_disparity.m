@@ -6,6 +6,11 @@ function [d, sim, DSI, exec_time] = find_disparity(L, R, d_range, H, method)
 % d_range = [d_min, d_max] is the range of feasible disparities
 % H is the half-length of the correlation window
 % method = {'Baseline', 'Classic', 'SmoothDP', 'OrderDP', 'SGM', 'LoopyBP', 'MultiscaleDP'}
+%
+% d is the disparity image
+% sim is the similarity between matches
+% DSI is the disparity space image
+% exec_time is the execution time in miliseconds
 
 if strcmp(method, 'Baseline')
     [d, sim, DSI] = istereo(L, R, d_range, H);

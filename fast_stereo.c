@@ -279,7 +279,7 @@ mexFunction(
   char  metric[14];
   double scaler, saturation;
   // default values
-  scaler = 1;
+  scaler = 0.25;
   saturation = 2;
 
 

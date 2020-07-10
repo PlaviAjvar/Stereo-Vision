@@ -12,7 +12,7 @@ function [L, R, d, GT, sim, DSI] = sim_method(image, method)
 % DSI is the disparity space image
 
 
-% load images and display
+% load images
 L = iread(strcat(image, '\view1.png'));
 R = iread(strcat(image, '\view5.png'));
 
