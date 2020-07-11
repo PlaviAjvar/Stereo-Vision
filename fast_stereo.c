@@ -22,6 +22,7 @@ void compute_means(float *L, float *R, int width, int height, int wx, int wy, fl
 void stereo_matching_classic(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax);
 void stereo_matching_smooth(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax,
         double lam, double vsat);
+void stereo_matching_ordered(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax);
 
 /* matrix reference macros Matlab element order (column wise) */
 #define REF(p,x,y)  p[(y)*width+x]
@@ -145,6 +146,7 @@ void stereo_matching_smooth(float *L, float *R, double *dsi, int width, int heig
     // leftmost possible x-value
     leftmost = (wx >= dmin) ? wx : dmin;
     
+    // base case
     for (y = wy; y < height - wy; ++y) {
         REF3(energy, leftmost, y, 0) = REF3(unary, leftmost, y, 0);
     }
@@ -250,6 +252,105 @@ void stereo_matching_smooth(float *L, float *R, double *dsi, int width, int heig
     mxFree(backtrack);
 }
 
+void stereo_matching_ordered(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax) {
+    double *unary, *energy;
+    int *backtrack;
+    int D, i, leftmost, x, y, d, up_index, disp_lo, disp_hi, disp_bye, cur_state, min_state;
+    double min_up;
+    double Z_NAN = mxGetNaN();
+
+    D = dmax - dmin + 1;
+    unary = (double*) mxCalloc(height * width * D, sizeof(double));
+    energy = (double*) mxCalloc(height * width * D, sizeof(double));
+    backtrack = (int*) mxCalloc(height * width * D, sizeof(int));
+
+    for (i = 0; i < height * width * D; ++i) {
+        unary[i] = Z_NAN;
+        energy[i] = Z_NAN;
+        backtrack[i] = -1;
+    }
+
+    // get unary costs
+    stereo_matching_classic(L, R, unary, width, height, wx, wy, dmin, dmax);
+
+    mexPrintf("Found unary costs\n");
+
+    // leftmost possible x-value
+    leftmost = (wx >= dmin) ? wx : dmin;
+
+    // base case
+    for (y = wy; y < height - wy; ++y) {
+        REF3(energy, leftmost, y, 0) = REF3(unary, leftmost, y, 0);
+    }
+
+    for (y = wy; y < height - wy; ++y) {
+        for (x = leftmost + 1; x < width - wx; ++x) {
+            disp_lo = dmin;
+            disp_hi = (dmax <= x - wx) ? dmax : (x - wx);
+            disp_bye = (dmax <= x - 1 - wx) ? dmax : (x - 1 - wx);
+
+            up_index = -1;
+            min_up = Z_NAN;
+
+            // case where there are no new feasible disparities
+            if (disp_bye == disp_hi) {
+                up_index = disp_bye - dmin;
+                min_up = REF3(energy, x-1, y, disp_bye - dmin);
+            }
+
+            // iterate in inverse order over disparities
+            for (d = disp_hi-1; d >= disp_lo; --d) {
+                if (up_index == -1 || REF3(energy, x-1, y, d - dmin) < min_up) {
+                    min_up = REF3(energy, x-1, y, d - dmin);
+                    up_index = d - dmin;
+                }
+
+                REF3(energy, x, y, d+1-dmin) = min_up;
+                REF3(backtrack, x, y, d+1-dmin) = up_index;
+            }
+
+            REF3(energy, x, y, 0) = min_up;
+            REF3(backtrack, x, y, 0) = up_index;
+        
+            // add unary costs
+            for (d = disp_lo; d <= disp_hi; ++d) {
+                REF3(energy, x, y, d-dmin) += REF3(unary, x, y, d-dmin);
+            }
+        }
+    }
+
+    mexPrintf("Found energy table\n");
+    
+    // reconstruct the solution for each row via backtracking
+    for (y = wy; y < height - wy; ++y) {
+        x = width - wx - 1;
+        disp_lo = dmin;
+        disp_hi = (dmax <= x - wx) ? dmax : (x - wx);
+
+        // first find the state with the minimum aggregated energy
+        min_state = 0;
+        for (d = disp_lo+1; d <= disp_hi; ++d) {
+            if (REF3(energy, x, y, min_state) > REF3(energy, x, y, d-dmin)) {
+                min_state = d - dmin;
+            }
+        }
+
+        // set zero energy for optimal matches in DSI
+        REF3(dsi, x, y, min_state) = 0;
+        cur_state = min_state;
+
+        // backtrack from that state
+        while (x > leftmost) {
+            cur_state = REF3(backtrack, x, y, cur_state);
+            REF3(dsi, x-1, y, cur_state) = 0;
+            --x;
+        }
+    } 
+
+    mxFree(unary);
+    mxFree(energy);
+    mxFree(backtrack);
+}
 
 
 /*
@@ -458,6 +559,9 @@ mexFunction(
   }
   else if (strcmp(metric, "SmoothDP") == 0) {
       stereo_matching_smooth(leftI, rightI, scoresD, width, height, wx, wy, dispmin, dispmax, scaler, saturation);
+  }
+  else if (strcmp(metric, "OrderDP") == 0) {
+      stereo_matching_ordered(leftI, rightI, scoresD, width, height, wx, wy, dispmin, dispmax);
   }
   else {
       mexErrMsgTxt("Unknown approach");
