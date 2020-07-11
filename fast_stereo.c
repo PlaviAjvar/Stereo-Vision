@@ -23,6 +23,14 @@ void stereo_matching_classic(float *L, float *R, double *dsi, int width, int hei
 void stereo_matching_smooth(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax,
         double lam, double vsat);
 void stereo_matching_ordered(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax);
+void stereo_matching_SGM(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax,
+        double lam, double vsat);
+void directional_matching(float *L, float *R, double *energy, double *unary, int width, int height, int wx, int wy, 
+        int dmin, int dmax, double lam, double vsat, int rx, int ry);
+void scanline_matching(float *L, float *R, double *energy, double *unary, int width, int height, int wx, int wy, 
+        int dmin, int dmax, double lam, double vsat, int rx, int ry, int x_init, int y_init);
+void update_neighbor(double *energy_old, double *energy_new, double *unary, int x_old, int y_old, int x_new, int y_new, 
+        int dmin, int disp_hi, int disp_bye, double lam, double vsat, int width, int height);
 
 /* matrix reference macros Matlab element order (column wise) */
 #define REF(p,x,y)  p[(y)*width+x]
@@ -252,6 +260,7 @@ void stereo_matching_smooth(float *L, float *R, double *dsi, int width, int heig
     mxFree(backtrack);
 }
 
+// implements order-connstrained scanline DP
 void stereo_matching_ordered(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax) {
     double *unary, *energy;
     int *backtrack;
@@ -352,6 +361,196 @@ void stereo_matching_ordered(float *L, float *R, double *dsi, int width, int hei
     mxFree(backtrack);
 }
 
+// helper function for updating neighbor states
+void update_neighbor(double *energy_old, double *energy_new, double *unary, int x_old, int y_old, int x_new, int y_new, 
+        int dmin, int disp_hi, int disp_bye, double lam, double vsat, int width, int height) {
+    int d, disp_ub;
+
+    // minimum of the upper bounds
+    disp_ub = (disp_hi <= disp_bye) ? disp_hi : disp_bye;
+    
+    // first rewrite old states into new ones
+    for (d = dmin; d <= disp_ub; ++d) {
+        REF3(energy_new, x_new, y_new, d-dmin) = REF3(energy_old, x_old, y_old, d-dmin);
+    }
+
+    // if range of disparities for old state is bigger, we have another state to consider
+    if (disp_bye > disp_hi && REF3(energy_new, x_new, y_new, disp_hi-dmin) > 
+            REF3(energy_old, x_old, y_old, disp_bye-dmin) + lam) {
+        REF3(energy_new, x_new, y_new, disp_hi-dmin) = REF3(energy_old, x_old, y_old, disp_bye-dmin) + lam;
+    }
+    
+    // forward pass
+    for (d = dmin + 1; d <= disp_hi; ++d) {
+        if (REF3(energy_new, x_new, y_new, d-dmin) > REF3(energy_new, x_new, y_new, d-1-dmin) + lam) {
+            REF3(energy_new, x_new, y_new, d-dmin) = REF3(energy_new, x_new, y_new, d-1-dmin) + lam;
+        }
+    }
+
+    // backward pass
+    for (d = disp_hi-1; d >= dmin; --d) {
+        if (REF3(energy_new, x_new, y_new, d-dmin) > REF3(energy_new, x_new, y_new, d+1-dmin) + lam) {
+            REF3(energy_new, x_new, y_new, d-dmin) = REF3(energy_new, x_new, y_new, d+1-dmin) + lam;
+        }
+    }
+
+    // add unary costs
+    for (d = dmin; d <= disp_hi; ++d) {
+        REF3(energy_new, x_new, y_new, d-dmin) += REF3(unary, x_new, y_new, d-dmin);
+    }
+}
+
+
+
+// helper function for matching along scanline
+void scanline_matching(float *L, float *R, double *energy, double *unary, int width, int height, int wx, int wy, 
+        int dmin, int dmax, double lam, double vsat, int rx, int ry, int x_init, int y_init) {
+    int x, y, d, leftmost, disp_hi, disp_bye;
+    leftmost = (wx >= dmin) ? wx : dmin;
+
+    // base case
+    for (d = dmin; d <= dmax; ++d) {
+        if (x_init - d >= wx) {
+            REF3(energy, x_init, y_init, d - dmin) = REF3(unary, x_init, y_init, d - dmin);
+        }
+    }
+
+    // initial point after base case
+    x = x_init + rx;
+    y = y_init + ry;
+        
+    // iterate over scanline
+    while(x >= leftmost && x < width - wx && y >= wy && y < height - wy) {
+        disp_hi = (dmax <= x - wx) ? dmax : (x - wx);
+        disp_bye = (dmax <= x - rx - wx) ? dmax : (x - rx - wx);
+        update_neighbor(energy, energy, unary, x-rx, y-ry, x, y, dmin, disp_hi, disp_bye, lam, vsat, width, height);
+        x += rx;
+        y += ry;
+    }
+}
+
+// implements scanline DP matching in specific direction
+void directional_matching(float *L, float *R, double *energy, double *unary, int width, int height, int wx, int wy, 
+        int dmin, int dmax, double lam, double vsat, int rx, int ry) {
+      int x, y, leftmost;
+
+      // leftmost possible x-value
+      leftmost = (wx >= dmin) ? wx : dmin;
+      
+      for (x = leftmost; x < width - wx; ++x) {
+          for (y = wy; y < height - wy; ++y) {
+              // if it's the edge pixel along this direction
+              // then do scanline dp starting from it
+              if (x - rx < leftmost || x - rx >= width - wx || y - ry < wy || y - ry >= height - wy) {
+                  scanline_matching(L, R, energy, unary, width, height, wy, wy, dmin, dmax, lam, vsat, rx, ry, x, y);
+              }
+          }
+      }
+}
+
+
+// implements semi-global matching in 8 directions
+void stereo_matching_SGM(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax,
+        double lam, double vsat) {
+      double **dir_energy;
+      double *energy, *eproxy, *unary;
+      int D, i, dir, x, y, leftmost, disp_hi, disp_bye, x_old, y_old, d;
+      const double Z_NAN = mxGetNaN();
+      const double inf = 1e10;
+      // directional vectors
+      const int dx[] = {0, 1, 1, 1, 0, -1, -1, -1};
+      const int dy[] = {-1, -1, 0, 1, 1, 1, 0, -1};
+      const int dir_count = 8;
+
+      D = dmax - dmin + 1;
+
+      // match in 8 directions (4 scanlines)
+      energy = (double*) mxCalloc(width * height * D, sizeof(double));
+      eproxy = (double*) mxCalloc(width * height * D, sizeof(double));
+      unary = (double*) mxCalloc(width * height * D, sizeof(double));
+      dir_energy = (double**) mxCalloc(dir_count, sizeof(double*));
+      
+      for (i = 0; i < width * height * D; ++i) {
+          energy[i] = inf;
+          eproxy[i] = inf;
+          unary[i] = inf;
+      }
+
+      // find unary costs
+      stereo_matching_classic(L, R, unary, width, height, wy, wy, dmin, dmax);
+
+      mexPrintf("Found unary costs\n");
+
+      for (dir = 0; dir < dir_count; ++dir) {
+          dir_energy[dir] = (double*) mxCalloc(width * height * D, sizeof(double));
+          for (i = 0; i < width * height * D; ++i) {
+              dir_energy[dir][i] = inf;
+          }
+          directional_matching(L, R, dir_energy[dir], unary, width, height, wx, wy, dmin, dmax, lam, vsat, dx[dir], dy[dir]);
+          mexPrintf("Direction (%d,%d) done\n", dx[dir], dy[dir]);
+      }
+      
+      // leftmost possible x-value
+      leftmost = (wx >= dmin) ? wx : dmin;
+
+      // take into account all directions
+      for (x = leftmost; x < width - wx; ++x) {
+          for (y = wy; y < height - wy; ++y) {
+            disp_hi = (dmax <= x - wx) ? dmax : (x - wx);
+
+            // initialize cummulative energy to zero
+            for (d = dmin; d <= disp_hi; ++d) {
+                REF3(energy, x, y, d-dmin) = 0;
+            }
+
+            for (dir = 0; dir < dir_count; ++dir) {
+                x_old = x - dx[dir];
+                y_old = y - dy[dir];
+                  
+                // if old point is feasible, update
+                if (x_old >= leftmost && x_old < width - wx && y_old >= wy && y_old < height - wy) {
+                    disp_bye = (dmax <= x_old - wx) ? dmax : (x_old - wx);
+
+                    // reset exproxy to inf
+                    for (d = dmin; d <= disp_hi; ++d) {
+                        REF3(eproxy, x, y, d-dmin) = inf;
+                    }
+
+                    update_neighbor(dir_energy[dir], eproxy, unary, x_old, y_old, x, y, dmin, 
+                        disp_hi, disp_bye, lam, vsat, width, height);
+
+                    // add to cummulative energy
+                    // subtract added unary cost
+                    for (d = dmin; d <= disp_hi; ++d) {
+                        REF3(energy, x, y, d-dmin) += (REF3(eproxy, x, y, d-dmin) - REF3(unary, x, y, d-dmin));
+                    }
+                }
+            }
+              
+            // finally add unary cost only once
+            for (d = dmin; d <= disp_hi; ++d) {
+                REF3(energy, x, y, d-dmin) += REF3(unary, x, y, d-dmin);
+            }
+        }
+    }
+
+      for (i = 0; i < width * height * D; ++i) {
+          if(energy[i] < inf) {
+              dsi[i] = energy[i];
+          }  
+      }
+
+      mxFree(energy);
+      mxFree(eproxy);
+      mxFree(unary);
+
+      for(dir = 0; dir < dir_count; ++dir) {
+          mxFree(dir_energy[dir]);
+      }
+
+      mxFree(dir_energy);
+}
+
 
 /*
  * disp = stereo(L, R, w, disprange, metric)
@@ -379,10 +578,6 @@ mexFunction(
 #endif
   char  metric[14];
   double scaler, saturation;
-  // default values
-  scaler = 0.25;
-  saturation = 2;
-
 
 #ifdef  TIMING
   gettimeofday (&t0, NULL);
@@ -398,13 +593,24 @@ mexFunction(
     if (!mxIsChar(prhs[4]))
         mexErrMsgTxt("approach must be specified by a string");
     mxGetString(prhs[4], metric, 14);
+    
+      // default parameter values
+      if (strcmp(metric, "SmoothDP") == 0) {
+          scaler = 0.25;
+          saturation = 2;
+      }
+      else if(strcmp(metric, "SGM") == 0) {
+          scaler = 0.03;
+          saturation = 0.25;
+      }
+    
     break;
   case 6:
     if (!mxIsChar(prhs[4]))
         mexErrMsgTxt("approach must be specified by a string");
     mxGetString(prhs[4], metric, 14);
     
-    if (strcmp(metric, "SmoothDP") != 0) {
+    if (strcmp(metric, "SmoothDP") != 0 && strcmp(metric, "SGM") != 0) {
         mexErrMsgTxt("too many arguments");
     }
     
@@ -562,6 +768,9 @@ mexFunction(
   }
   else if (strcmp(metric, "OrderDP") == 0) {
       stereo_matching_ordered(leftI, rightI, scoresD, width, height, wx, wy, dispmin, dispmax);
+  }
+  else if (strcmp(metric, "SGM") == 0) {
+      stereo_matching_SGM(leftI, rightI, scoresD, width, height, wx, wy, dispmin, dispmax, scaler, saturation);
   }
   else {
       mexErrMsgTxt("Unknown approach");

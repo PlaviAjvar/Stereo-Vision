@@ -1,6 +1,8 @@
-function [Mlam, Msat, Mmae] = DP_param_sim(image)
-% Function used to simulate scanline DP with smoothness constraint
-% [Mlam, Msat, Mmae] = DP_param_sim(image)
+function [Mlam, Msat, Mmae] = param_sim(image, method)
+% Function used to simulate parametrized algorithms
+% [Mlam, Msat, Mmae] = param_sim(image, method)
+%
+% method = {'ScanlineDP', 'SGM', 'LoopyBP', 'MultiscaleBP'}
 %
 % Mlam, Msat are the matrices of scalar/saturation pairs (meshgrid)
 % Mmae is the mean absolute error for GT and d obtained, using given pair
@@ -30,12 +32,16 @@ GT = GT + offset;
     
 for i = 1:size(lam,2)
     for j = 1:size(vsat,2)
-        DSI = fast_stereo(L, R, H, [dmin, dmax], 'SmoothDP', [Mlam(i,j), Msat(i,j)]);
-        [sim, d] = min(DSI, [], 3);
-        d(isnan(sim)) = NaN;
-        d = d + offset;
-        d = d + (dmin - 1);
-        Mmae(i,j) = dif_metric(d, GT);
+        if Mlam(i,j) < Msat(i,j)
+            DSI = fast_stereo(L, R, H, [dmin, dmax], method, [Mlam(i,j), Msat(i,j)]);
+            [sim, d] = min(DSI, [], 3);
+            d(isnan(sim)) = NaN;
+            d = d + offset;
+            d = d + (dmin - 1);
+            Mmae(i,j) = dif_metric(d, GT);
+        else
+            Mmae(i,j) = NaN;
+        end
     end
 end
 
