@@ -365,6 +365,7 @@ void stereo_matching_ordered(float *L, float *R, double *dsi, int width, int hei
 void update_neighbor(double *energy_old, double *energy_new, double *unary, int x_old, int y_old, int x_new, int y_new, 
         int dmin, int disp_hi, int disp_bye, double lam, double vsat, int width, int height) {
     int d, disp_ub;
+    double min_energy;
 
     // minimum of the upper bounds
     disp_ub = (disp_hi <= disp_bye) ? disp_hi : disp_bye;
@@ -391,6 +392,21 @@ void update_neighbor(double *energy_old, double *energy_new, double *unary, int 
     for (d = disp_hi-1; d >= dmin; --d) {
         if (REF3(energy_new, x_new, y_new, d-dmin) > REF3(energy_new, x_new, y_new, d+1-dmin) + lam) {
             REF3(energy_new, x_new, y_new, d-dmin) = REF3(energy_new, x_new, y_new, d+1-dmin) + lam;
+        }
+    }
+    
+    // find min element in last column
+    min_energy = REF3(energy_old, x_old, y_old, 0);
+    for (d = dmin+1; d <= disp_bye; ++d) {
+        if (REF3(energy_old, x_old, y_old, d-dmin) < min_energy) {
+            min_energy = REF3(energy_old, x_old, y_old, d-dmin);
+        }
+    }
+    
+    // apply saturation
+    for (d = dmin; d <= disp_hi; ++d) {
+        if (REF3(energy_new, x_new, y_new, d-dmin) > min_energy + vsat) {
+            REF3(energy_new, x_new, y_new, d-dmin) = min_energy + vsat;
         }
     }
 
@@ -600,8 +616,8 @@ mexFunction(
           saturation = 2;
       }
       else if(strcmp(metric, "SGM") == 0) {
-          scaler = 0.03;
-          saturation = 0.25;
+          scaler = 0.1;
+          saturation = 2;
       }
     
     break;
@@ -758,8 +774,14 @@ mexFunction(
   gettimeofday (&t3, NULL);
 #endif
 
-  mexPrintf("%s\n\n", metric);
-
+  mexPrintf("\n%s", metric);
+  
+  if(strcmp(metric, "SmoothDP") == 0 || strcmp(metric, "SGM") == 0) {
+    mexPrintf("(scaler = %f, saturation = %f)", scaler, saturation);
+  }
+  
+  mexPrintf("\n\n");
+  
   if (strcmp(metric, "Classic") == 0) {
       stereo_matching_classic(leftI, rightI, scoresD, width, height, wx, wy, dispmin, dispmax);
   }
