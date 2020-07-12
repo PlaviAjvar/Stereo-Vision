@@ -1,6 +1,6 @@
-function [L, R, d, GT, sim, DSI] = sim_method(image, method)
+function [L, R, d, GT, sim, DSI, exec_time] = sim_method(image, method)
 % Utility function for simulating stereo algorithms
-% [L, R, d, GT, sim, DSI] = sim_method(image, method)
+% [L, R, d, GT, sim, DSI, exec_time] = sim_method(image, method)
 %
 % image = {'Aloe', 'Lampshade1', 'Rocks1'}
 % method = {'Baseline', 'Classic', 'SmoothDP', 'OrderDP', 'SGM', 'LoopyBP'}
@@ -10,6 +10,7 @@ function [L, R, d, GT, sim, DSI] = sim_method(image, method)
 % GT is the ground truth
 % sim is the similarity measure for matching pixel with given disparity
 % DSI is the disparity space image
+% exec_time is the execution time given in miliseconds
 
 
 % load images
@@ -24,7 +25,7 @@ dmax = double(max(max(GT)));
 
 % fix correlation window and call utility function for finding disparities
 H = 5;
-[d, sim, DSI] = find_disparity(L, R, [dmin, dmax], H, method);
+[d, sim, DSI, exec_time] = find_disparity(L, R, [dmin, dmax], H, method);
 
 % d = istereo(L, R, [dmin, dmax], H);
 

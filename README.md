@@ -8,13 +8,13 @@ The requirements are Peter Corke's machine vision toolbox and the MinGW-w64 C co
 ## Functionality
 Documentation for the functions can also be found through MATLAB's help.
 
->  function [L, R, d, GT, sim, DSI] = sim_method(image, method)
+>  [L, R, d, GT, sim, DSI, exec_time] = sim_method(image, method))
 
 Simulates function given by parameter "method", for given image subfolder "image". The possible values for "image" are {'Aloe', 'Lampshade1', 'Rocks1'}, although other folders can be added for testing. The method can be one of the following: {'Baseline', 'Classic', 'SmoothDP', 'OrderDP', 'SGM', 'LoopyBP'}.
 
 Baseline calls Corke's matching algorithm, based on ZNCC. Classic uses the same approach, but my implementation. SmoothDP implements scanline dynamic programming, with smoothness costs. Order DP implements ordering constrained DP. SGM implements semi-global matching. LoopyBP implements serial loopy belief propagation.
 
-The output parameters are the image pair "L, R" (half-size version), the disparity image "d", the ground truth "GT", the similarity measure map "sim", and the disparity space image "DSI" (3D representation).
+The output parameters are the image pair "L, R" (half-size version), the disparity image "d", the ground truth "GT", the similarity measure map "sim", the disparity space image "DSI" (3D representation), and the execution time in miliseconds "exec_time".
 
 > function d_new = quadratic_process(d, DSI, offset)
 
@@ -26,7 +26,7 @@ Implements quadratic interpolation. "A, B, C" are matrices of values, representi
 
 > function good_percentage = postprocess(L, R, d, sim, DSI, GT)
 
-Analyzes percentage of good matches (good_percentage). Also displays image which displays problematic pixels.
+Analyzes percentage of good matches (good_percentage). Also displays image which displays problematic pixels. Should only be used with Classic approach.
 
 > function [Mlam, Msat, Mmae] = param_sim(image, method)
 
@@ -44,3 +44,7 @@ Call optimization methods directly, rather than through sim_method. Very similar
 > function disp_results(L, R, d, GT)
 
 Displays the image pair L, R side by side using Corke's stdisp. Also displays disparity image and ground truth on a bar graph, side by side.
+
+> runtime = test_runtime(image, method)
+
+Gives average runtime over several tries, for algorithm "method" applied to image "image".

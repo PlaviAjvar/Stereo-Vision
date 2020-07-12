@@ -1,8 +1,6 @@
 function good_percentage = postprocess(L, R, d, sim, DSI, GT)
 % Function for postprocessing an image, displaying relevant information
-% Works only for algorithms which generate valid DSI.
-% {'Baseline', 'Classic', 'SGM', 'LoopyBP'}
-%
+% Works only for Classic approach
 % good_percentage = postprocess(L, R, d, DSI)
 %
 % L, R are the image pair
@@ -18,21 +16,21 @@ status = zeros(size(d));
 [U,V] = imeshgrid(L);
 
 % remove NaN values
-status(isnan(d)) = 4;
+status(isnan(d)) = 3;
 
 % (C) ignore peek if it's energy is too high (low similarity)
 e_high = 0.4;
-status(sim > e_high) = 2;
+status(sim > e_high) = 1;
 
 % (D) interpolate polynomial through points next to optimum
 % check quadratic coefficient
-flat = 0.1;
+flat = 0.05;
 [A, B, C] = quad_int(DSI);
-status(A < flat) = 3;
+status(A < flat) = 2;
 
 % display on image
 idisp(status);
-colormap( colorname({'lightgreen', 'cyan', 'blue', 'orange', 'red'}) )
+colormap(colorname({'lightgreen', 'red', 'blue', 'orange'}));
 
 % percentage of "green" samples (good matches)
 good_percentage = sum(status(:) == 0) / prod(size(status)) * 100;
