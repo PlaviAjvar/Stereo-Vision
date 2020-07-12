@@ -5,7 +5,7 @@ function [d, sim, DSI, exec_time] = find_disparity(L, R, d_range, H, method)
 % L, R are the image pair
 % d_range = [d_min, d_max] is the range of feasible disparities
 % H is the half-length of the correlation window
-% method = {'Baseline', 'Classic', 'SmoothDP', 'OrderDP', 'SGM', 'LoopyBP', 'MultiscaleDP'}
+% method = {'Baseline', 'Classic', 'SmoothDP', 'OrderDP', 'SGM', 'LoopyBP'}
 %
 % d is the disparity image
 % sim is the similarity between matches

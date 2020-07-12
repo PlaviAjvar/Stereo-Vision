@@ -2,7 +2,7 @@ function [Mlam, Msat, Mmae] = param_sim(image, method)
 % Function used to simulate parametrized algorithms
 % [Mlam, Msat, Mmae] = param_sim(image, method)
 %
-% method = {'ScanlineDP', 'SGM', 'LoopyBP', 'MultiscaleBP'}
+% method = {'ScanlineDP', 'SGM', 'LoopyBP'}
 %
 % Mlam, Msat are the matrices of scalar/saturation pairs (meshgrid)
 % Mmae is the mean absolute error for GT and d obtained, using given pair

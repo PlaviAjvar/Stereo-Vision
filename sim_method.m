@@ -3,7 +3,7 @@ function [L, R, d, GT, sim, DSI] = sim_method(image, method)
 % [L, R, d, GT, sim, DSI] = sim_method(image, method)
 %
 % image = {'Aloe', 'Lampshade1', 'Rocks1'}
-% method = {'Baseline', 'Classic', 'SmoothDP', 'OrderDP', 'SGM', 'LoopyBP', 'MultiscaleDP'}
+% method = {'Baseline', 'Classic', 'SmoothDP', 'OrderDP', 'SGM', 'LoopyBP'}
 %
 % L, R are the image pair
 % d is the disparity map
