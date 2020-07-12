@@ -31,6 +31,11 @@ void scanline_matching(float *L, float *R, double *energy, double *unary, int wi
         int dmin, int dmax, double lam, double vsat, int rx, int ry, int x_init, int y_init);
 void update_neighbor(double *energy_old, double *energy_new, double *unary, int x_old, int y_old, int x_new, int y_new, 
         int dmin, int disp_hi, int disp_bye, double lam, double vsat, int width, int height);
+void stereo_matching_LoopyBP(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax,
+        double lam, double vsat, int iterations);
+void propagate(int x, int y, double **message, double *unary, double *eproxy, int width, int height, int wx, int wy, 
+        int dmin, int dmax, int direction, double lam, double vsat);
+void normalize(double *energy, int x, int y, int dmin, int disp_hi, int width, int height);
 
 /* matrix reference macros Matlab element order (column wise) */
 #define REF(p,x,y)  p[(y)*width+x]
@@ -568,6 +573,187 @@ void stereo_matching_SGM(float *L, float *R, double *dsi, int width, int height,
 }
 
 
+// helper function for normalizing messages
+void normalize(double *energy, int x, int y, int dmin, int disp_hi, int width, int height) {
+    int d;
+    double min_energy;
+
+    // find minimal energy
+    min_energy = REF3(energy, x, y, 0);
+    for (d = dmin+1; d <= disp_hi; ++d) {
+        if (REF3(energy, x, y, d-dmin) < min_energy) {
+            min_energy = REF3(energy, x, y, d-dmin);
+        }
+    }
+
+    // subtract min energy
+    for (d = dmin; d <= disp_hi; ++d) {
+        REF3(energy, x, y, d-dmin) -= min_energy;
+    }
+}
+
+
+// helper function for propagating messages in BP algorithm
+void propagate(int x, int y, double **message, double *unary, double *eproxy, int width, int height, int wx, int wy, 
+        int dmin, int dmax, int direction, double lam, double vsat) {
+    int dir, d, disp_hi, disp_bye, x_old, y_old, leftmost, x_new, y_new;
+    const int dir_count = 4;
+    const int dx[] = {0, 1, 0, -1};
+    const int dy[] = {-1, 0, 1, 0};
+    const int inv_direction[] = {2, 3, 0, 1};
+    const double inf = 1e10;
+
+    // new pixel coordinates
+    x_new = x + dx[direction];
+    y_new = y + dy[direction];
+
+    leftmost = (wx >= dmin) ? wx : dmin;
+    disp_hi = (dmax <= x_new - wx) ? dmax : (x_new - wx);
+    disp_bye = (dmax <= x - wx) ? dmax : (x - wx);
+
+    // reset last column to zero
+    for (d = dmin; d <= disp_bye; ++d) {
+        REF3(eproxy, x, y, d-dmin) = 0;
+    }
+
+    // reset current column to infinity
+    for (d = dmin; d <= disp_hi; ++d) {
+        REF3(eproxy, x_new, y_new, d-dmin) = inf;
+    }
+
+    // aggregate messages into node cost
+    for (dir = 0; dir < dir_count; ++dir) {
+        if (dir != direction) {
+            x_old = x + dx[dir];
+            y_old = y + dy[dir];
+
+            // if point is feasible
+            if (x_old >= leftmost && x_old < width - wx && y_old >= wy && y_old < height - wy) {
+                for (d = dmin; d <= disp_bye; ++d) {
+                    REF3(eproxy, x, y, d-dmin) += REF3(message[inv_direction[dir]], x_old, y_old, d-dmin);
+                }
+            }
+        }
+    }
+
+    // add unary cost
+    for (d = dmin; d <= disp_bye; ++d) {
+        REF3(eproxy, x, y, d-dmin) += REF3(unary, x, y, d-dmin);
+    }
+
+    // calculate transition (x_old, y_old) -> (x, y)
+    update_neighbor(eproxy, eproxy, unary, x, y, x_new, y_new, dmin, disp_hi, disp_bye,
+                    lam, vsat, width, height);
+    
+    // get message by subtracting unary cost
+    for (d = dmin; d <= disp_hi; ++d) {
+        REF3(message[direction], x, y, d-dmin) = REF3(eproxy, x_new, y_new, d-dmin) - REF3(unary, x_new, y_new, d-dmin);
+    }
+
+    // normalize costs
+    normalize(message[direction], x, y, dmin, disp_hi, width, height);
+}
+
+
+// implements Loopy BP stereo matching, serial propagation
+void stereo_matching_LoopyBP(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax,
+        double lam, double vsat, int iterations) {
+    
+    double **message;
+    double *unary, *eproxy;
+    int x, y, i, dir, D, iter, leftmost, disp_hi, d, x_old, y_old;
+    const int dir_count = 4;
+    D = dmax - dmin + 1;
+    // directions
+    const int up = 0;
+    const int right = 1;
+    const int down = 2;
+    const int left = 3;
+    const int dx[] = {0, 1, 0, -1};
+    const int dy[] = {-1, 0, 1, 0};
+    const int inv_direction[] = {2, 3, 0, 1};
+    double node_eng;
+
+    unary = (double*) mxCalloc(width * height * D, sizeof(double));
+    eproxy = (double*) mxCalloc(width * height * D, sizeof(double));
+
+    // calculate unary costs
+    stereo_matching_classic(L, R, unary, width, height, wy, wy, dmin, dmax);
+
+    mexPrintf("Found unary costs.\n");
+
+    // messages is an array of 4 3D maps (up, right, down, left)
+    message = (double**) mxCalloc(dir_count, sizeof(double*));
+
+    for (dir = 0; dir < dir_count; ++dir) {
+        message[dir] = (double*) mxCalloc(width * height * D, sizeof(double));
+        for (i = 0; i < width * height * D; ++i) {
+            message[dir][i] = 0;
+        }
+    }
+
+    // leftmost feasible x-value
+    leftmost = (wx >= dmin) ? wx : dmin;
+
+    for (iter = 0; iter < iterations; ++iter) {
+        mexPrintf("Iteration %d\n", iter+1);
+        mexEvalString("drawnow;");
+ 
+        // left, up pass
+        for (x = width - wx - 1; x > leftmost; --x) {
+            for(y = height - wy - 1; y > wy; --y) {
+                propagate(x, y, message, unary, eproxy, width, height, wx, wy, dmin, dmax, left, lam, vsat);
+                propagate(x, y, message, unary, eproxy, width, height, wx, wy, dmin, dmax, up, lam, vsat);
+            }
+        }
+        
+        // right, down pass
+        for (x = leftmost; x < width - wx - 1; ++x) {
+            for(y = wy; y < height - wy - 1; ++y) {
+                propagate(x, y, message, unary, eproxy, width, height, wx, wy, dmin, dmax, right, lam, vsat);
+                propagate(x, y, message, unary, eproxy, width, height, wx, wy, dmin, dmax, down, lam, vsat);
+            }
+        }
+    }
+
+    mexPrintf("Propagation finished\n");
+
+    // calculate costs at nodes
+    for (x = leftmost; x < width - wx; ++x) {
+        disp_hi = (dmax <= x - wx) ? dmax : (x - wx);
+        for(y = wy; y < height - wy; ++y) {
+            for (d = dmin; d <= disp_hi; ++d) {
+                // calculate total energy at node
+                node_eng = 0;
+
+                for (dir = 0; dir < dir_count; ++dir) {
+                    x_old = x + dx[dir];
+                    y_old = y + dy[dir];
+
+                    // if transition is feasible
+                    if (x_old >= leftmost && x_old < width - wx && y_old >= wy && y_old < height - wy) {
+                        node_eng += REF3(message[inv_direction[dir]], x_old, y_old, d-dmin);
+                    }
+                }
+
+                REF3(dsi, x, y, d-dmin) = node_eng + REF3(unary, x, y, d-dmin);
+            }
+        }
+    }
+
+    mexPrintf("Node costs aggregated\n");
+
+    mxFree(eproxy);
+    mxFree(unary);
+
+    for(dir = 0; dir < dir_count; ++dir) {
+        mxFree(message[dir]);
+    }
+
+    mxFree(message);
+}
+
+
 /*
  * disp = stereo(L, R, w, disprange, metric)
  *
@@ -582,7 +768,7 @@ mexFunction(
 		 int nlhs, mxArray *plhs[],
 		 int nrhs, const mxArray *prhs[])
 {
-  unsigned int width_l, height_l, height_r, width_r, width, height;
+  unsigned int width_l, height_l, height_r, width_r, width, height, iterations;
   int wx, wy, i, j, dispmin, dispmax;
   float *leftI, *rightI, *leftI_ptr, *rightI_ptr;
   double *p, *scoresD, *exec_time;
@@ -601,11 +787,11 @@ mexFunction(
 
   /* Check for proper number of arguments */
 
-  switch (nrhs) {
-  case 4:
-    strcpy(metric, "Classic");
-    break;
-  case 5:
+  if (nrhs == 4) {
+      strcpy(metric, "Classic");
+  }
+
+  if (nrhs >= 5) {
     if (!mxIsChar(prhs[4]))
         mexErrMsgTxt("approach must be specified by a string");
     mxGetString(prhs[4], metric, 14);
@@ -615,22 +801,23 @@ mexFunction(
           scaler = 0.25;
           saturation = 2;
       }
-      else if(strcmp(metric, "SGM") == 0) {
-          scaler = 0.1;
+      else if (strcmp(metric, "SGM") == 0) {
+          scaler = 0.05;
           saturation = 2;
       }
-    
-    break;
-  case 6:
-    if (!mxIsChar(prhs[4]))
-        mexErrMsgTxt("approach must be specified by a string");
-    mxGetString(prhs[4], metric, 14);
-    
-    if (strcmp(metric, "SmoothDP") != 0 && strcmp(metric, "SGM") != 0) {
+      else if (strcmp(metric, "LoopyBP") == 0) {
+          scaler = 0.05;
+          saturation = 2;
+          iterations = 20;
+      }
+  }
+
+  if (nrhs >= 6) {
+    if (strcmp(metric, "SmoothDP") != 0 && strcmp(metric, "SGM") != 0 && strcmp(metric, "LoopyBP") != 0) {
         mexErrMsgTxt("too many arguments");
     }
-    
-      /* get disparity range */
+
+    /* get disparity range */
     switch (mxGetNumberOfElements(prhs[5])) {
       case 2: {
         double  *param = mxGetPr(prhs[5]);
@@ -643,11 +830,18 @@ mexFunction(
         mexErrMsgTxt("Parameters must be 1- or 2-vector");
         return;
       }
-    
-    break;
-  default:
-    mexErrMsgTxt("expecting 4,5 or 6 arguments");
-    return;
+  }
+
+  if (nrhs >= 7) {
+    if (strcmp(metric, "LoopyBP") != 0) {
+        mexErrMsgTxt("too many arguments");
+    }
+    iterations = mxGetScalar(prhs[6]);
+  }
+
+  if (nrhs < 4 || nrhs > 7) {
+      mexErrMsgTxt("expecting 4,5,6 or 7 arguments");
+      return;
   }
 
   /* Check that input images are same size */
@@ -776,11 +970,15 @@ mexFunction(
 
   mexPrintf("\n%s", metric);
   
-  if(strcmp(metric, "SmoothDP") == 0 || strcmp(metric, "SGM") == 0) {
-    mexPrintf("(scaler = %f, saturation = %f)", scaler, saturation);
+  if(strcmp(metric, "SmoothDP") == 0 || strcmp(metric, "SGM") == 0 || strcmp(metric, "LoopyBP") == 0) {
+    mexPrintf("(scaler = %f, saturation = %f", scaler, saturation);
+  }
+
+  if(strcmp(metric, "LoopyBP") == 0) {
+      mexPrintf(", iterations = %d", iterations);
   }
   
-  mexPrintf("\n\n");
+  mexPrintf(")\n\n");
   
   if (strcmp(metric, "Classic") == 0) {
       stereo_matching_classic(leftI, rightI, scoresD, width, height, wx, wy, dispmin, dispmax);
@@ -793,6 +991,10 @@ mexFunction(
   }
   else if (strcmp(metric, "SGM") == 0) {
       stereo_matching_SGM(leftI, rightI, scoresD, width, height, wx, wy, dispmin, dispmax, scaler, saturation);
+  }
+  else if (strcmp(metric, "LoopyBP") == 0) {
+      stereo_matching_LoopyBP(leftI, rightI, scoresD, width, height, wx, wy, dispmin, dispmax, scaler, saturation,
+                                iterations);
   }
   else {
       mexErrMsgTxt("Unknown approach");

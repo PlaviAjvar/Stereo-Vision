@@ -7,8 +7,8 @@ function [Mlam, Msat, Mmae] = param_sim(image, method)
 % Mlam, Msat are the matrices of scalar/saturation pairs (meshgrid)
 % Mmae is the mean absolute error for GT and d obtained, using given pair
 
-lam  = [0.05 0.2 0.4 1];
-vsat = [0.1  0.5 1   2];
+lam  = [0.05 0.1 0.2 0.5];
+vsat = [0.5 0.75 1  2];
 
 [Mlam, Msat] = meshgrid(lam, vsat);
     
