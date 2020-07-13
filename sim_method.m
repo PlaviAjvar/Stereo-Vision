@@ -1,9 +1,10 @@
-function [L, R, d, GT, sim, DSI, exec_time] = sim_method(image, method)
+function [L, R, d, GT, sim, DSI, exec_time] = sim_method(image, method, H)
 % Utility function for simulating stereo algorithms
-% [L, R, d, GT, sim, DSI, exec_time] = sim_method(image, method)
+% [L, R, d, GT, sim, DSI, exec_time] = sim_method(image, method, H)
 %
 % image = {'Aloe', 'Lampshade1', 'Rocks1'}
 % method = {'Baseline', 'Classic', 'SmoothDP', 'OrderDP', 'SGM', 'LoopyBP'}
+% H is the halfsize of the correlation window
 %
 % L, R are the image pair
 % d is the disparity map
@@ -24,7 +25,6 @@ dmin = double(min(min(GT)));
 dmax = double(max(max(GT)));
 
 % fix correlation window and call utility function for finding disparities
-H = 5;
 [d, sim, DSI, exec_time] = find_disparity(L, R, [dmin, dmax], H, method);
 
 % d = istereo(L, R, [dmin, dmax], H);

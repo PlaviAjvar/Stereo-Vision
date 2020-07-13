@@ -31,6 +31,8 @@ void scanline_matching(float *L, float *R, double *energy, double *unary, int wi
         int dmin, int dmax, double lam, double vsat, int rx, int ry, int x_init, int y_init);
 void update_neighbor(double *energy_old, double *energy_new, double *unary, int x_old, int y_old, int x_new, int y_new, 
         int dmin, int disp_hi, int disp_bye, double lam, double vsat, int width, int height);
+void update_neighbor_2cost(double *energy_old, double *energy_new, double *unary, int x_old, int y_old, int x_new, 
+        int y_new, int dmin, int disp_hi, int disp_bye, double lam, double vsat, int width, int height);
 void stereo_matching_LoopyBP(float *L, float *R, double *dsi, int width, int height, int wx, int wy, int dmin, int dmax,
         double lam, double vsat, int iterations);
 void propagate(int x, int y, double **message, double *unary, double *eproxy, int width, int height, int wx, int wy, 
@@ -366,7 +368,7 @@ void stereo_matching_ordered(float *L, float *R, double *dsi, int width, int hei
     mxFree(backtrack);
 }
 
-// helper function for updating neighbor states
+// helper function for updating neighbor states (linear truncated cost)
 void update_neighbor(double *energy_old, double *energy_new, double *unary, int x_old, int y_old, int x_new, int y_new, 
         int dmin, int disp_hi, int disp_bye, double lam, double vsat, int width, int height) {
     int d, disp_ub;
@@ -421,6 +423,47 @@ void update_neighbor(double *energy_old, double *energy_new, double *unary, int 
     }
 }
 
+// helper function for updating neighbor states (2 cost model)
+void update_neighbor_2cost(double *energy_old, double *energy_new, double *unary, int x_old, int y_old, int x_new, int y_new, 
+        int dmin, int disp_hi, int disp_bye, double lam, double vsat, int width, int height) {
+    int d, disp_ub;
+    double min_energy;
+
+    // minimum of the upper bounds
+    disp_ub = (disp_hi <= disp_bye) ? disp_hi : disp_bye;
+    
+    // first rewrite old states into new ones
+    for (d = dmin; d <= disp_ub; ++d) {
+        REF3(energy_new, x_new, y_new, d-dmin) = REF3(energy_old, x_old, y_old, d-dmin);
+    }
+    
+    // forward pass
+    for (d = dmin+1; d <= disp_hi; ++d) {
+        if (REF3(energy_old, x_old, y_old, d-1-dmin) + lam < REF3(energy_new, x_new, y_new, d-dmin)) {
+            REF3(energy_new, x_new, y_new, d-dmin) = REF3(energy_old, x_old, y_old, d-1-dmin) + lam;
+        }
+        if(d > 1 && REF3(energy_old, x_old, y_old, d-2-dmin) + vsat < REF3(energy_new, x_new, y_new, d-dmin)) {
+            REF3(energy_new, x_new, y_new, d-dmin) = REF3(energy_old, x_old, y_old, d-2-dmin) + vsat;
+        }
+    }
+
+    // backward pass
+    for (d = disp_hi-1; d >= dmin; --d) {
+        if (d + 1 <= disp_bye && REF3(energy_new, x_new, y_new, d-dmin) > REF3(energy_old, x_old, y_old, d+1-dmin) + lam) {
+            REF3(energy_new, x_new, y_new, d-dmin) = REF3(energy_old, x_old, y_old, d+1-dmin) + lam;
+        }
+        
+        if(d + 2 <= disp_bye && REF3(energy_old, x_old, y_old, d+2-dmin) + vsat < REF3(energy_new, x_new, y_new, d-dmin)) {
+            REF3(energy_new, x_new, y_new, d-dmin) = REF3(energy_old, x_old, y_old, d+2-dmin) + vsat;
+        }
+    }
+
+    // add unary costs
+    for (d = dmin; d <= disp_hi; ++d) {
+        REF3(energy_new, x_new, y_new, d-dmin) += REF3(unary, x_new, y_new, d-dmin);
+    }
+}
+
 
 
 // helper function for matching along scanline
@@ -444,7 +487,7 @@ void scanline_matching(float *L, float *R, double *energy, double *unary, int wi
     while(x >= leftmost && x < width - wx && y >= wy && y < height - wy) {
         disp_hi = (dmax <= x - wx) ? dmax : (x - wx);
         disp_bye = (dmax <= x - rx - wx) ? dmax : (x - rx - wx);
-        update_neighbor(energy, energy, unary, x-rx, y-ry, x, y, dmin, disp_hi, disp_bye, lam, vsat, width, height);
+        update_neighbor_2cost(energy, energy, unary, x-rx, y-ry, x, y, dmin, disp_hi, disp_bye, lam, vsat, width, height);
         x += rx;
         y += ry;
     }
@@ -537,7 +580,7 @@ void stereo_matching_SGM(float *L, float *R, double *dsi, int width, int height,
                         REF3(eproxy, x, y, d-dmin) = inf;
                     }
 
-                    update_neighbor(dir_energy[dir], eproxy, unary, x_old, y_old, x, y, dmin, 
+                    update_neighbor_2cost(dir_energy[dir], eproxy, unary, x_old, y_old, x, y, dmin, 
                         disp_hi, disp_bye, lam, vsat, width, height);
 
                     // add to cummulative energy
@@ -802,8 +845,8 @@ mexFunction(
           saturation = 2;
       }
       else if (strcmp(metric, "SGM") == 0) {
-          scaler = 0.05;
-          saturation = 2;
+          scaler = 0.02;
+          saturation = 0.2;
       }
       else if (strcmp(metric, "LoopyBP") == 0) {
           scaler = 0.05;

@@ -8,9 +8,9 @@ The requirements are Peter Corke's machine vision toolbox and the MinGW-w64 C co
 ## Functionality
 Documentation for the functions can also be found through MATLAB's help.
 
->  [L, R, d, GT, sim, DSI, exec_time] = sim_method(image, method))
+>  [L, R, d, GT, sim, DSI, exec_time] = sim_method(image, method, H)
 
-Simulates function given by parameter "method", for given image subfolder "image". The possible values for "image" are {'Aloe', 'Lampshade1', 'Rocks1'}, although other folders can be added for testing. The method can be one of the following: {'Baseline', 'Classic', 'SmoothDP', 'OrderDP', 'SGM', 'LoopyBP'}.
+Simulates function given by parameter "method", for given image subfolder "image". The possible values for "image" are {'Aloe', 'Lampshade1', 'Rocks1'}, although other folders can be added for testing. The method can be one of the following: {'Baseline', 'Classic', 'SmoothDP', 'OrderDP', 'SGM', 'LoopyBP'}. "H" is the half-size of the correlation window, i.e. the window dimensions are (2H+1) x (2H+1).
 
 Baseline calls Corke's matching algorithm, based on ZNCC. Classic uses the same approach, but my implementation. SmoothDP implements scanline dynamic programming, with smoothness costs. Order DP implements ordering constrained DP. SGM implements semi-global matching. LoopyBP implements serial loopy belief propagation.
 
