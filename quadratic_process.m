@@ -18,6 +18,10 @@ for i = 1:size(A,1)
         
         % optimum of quadratic polynomial
         % also add offset
-        d_new(i,j) = -b / (2*a) + offset;
+        if ~isnan(a)
+            d_new(i,j) = -b / (2*a) + offset;
+        else
+            d_new(i,j) = d(i,j);
+        end
     end
 end
